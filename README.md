@@ -41,6 +41,7 @@ Required Tools to Implement:
 Create a `.env` file with the following API keys:
 ```
 OPENAI_API_KEY="YOUR_KEY"
+OPENAI_BASE_URL="https://api.openai.com/v1" # or "https://openai.vocareum.com/v1"
 CHROMA_OPENAI_API_KEY="YOUR_KEY"
 TAVILY_API_KEY="YOUR_KEY"
 ```
@@ -55,15 +56,15 @@ TAVILY_API_KEY="YOUR_KEY"
 ### Directory Structure
 ```
 project/
-├── starter/
-│   ├── games/           # JSON files with game data
-│   ├── lib/             # Custom library implementations
-│   │   ├── llm.py       # LLM abstractions
-│   │   ├── messages.py  # Message handling
-│   │   ├── ...
-│   │   └── tooling.py   # Tool implementations
-│   ├── Udaplay_01_starter_project.ipynb  # Part 1 implementation
-│   └── Udaplay_02_starter_project.ipynb  # Part 2 implementation
+
+├── games/           # JSON files with game data
+├── lib/             # Custom library implementations
+│   ├── llm.py       # LLM abstractions
+│   ├── messages.py  # Message handling
+│   ├── ...
+│   └── tooling.py   # Tool implementations
+├── Udaplay_01_starter_project.ipynb  # Part 1 implementation
+└── Udaplay_02_starter_project.ipynb  # Part 2 implementation
 ```
 
 ## Getting Started
