@@ -1,23 +1,23 @@
-import json
 from typing import List, Optional, Dict, Any, Union
-
+from typing_extensions import TypedDict
 import chromadb
+from chromadb.utils import embedding_functions
 from chromadb.api.models.Collection import Collection as ChromaCollection
 from chromadb.api.types import EmbeddingFunction, QueryResult, GetResult
-from chromadb.utils import embedding_functions
 
-from lib.document import GameInfo, GameDocument
+from lib.loaders import PDFLoader
+from lib.documents import Document, Corpus
 
 
 class VectorStore:
     """
     High-level interface for vector database operations using ChromaDB.
-
+    
     This class provides a simplified API for storing and querying document embeddings
     in a ChromaDB collection. It handles the conversion between our Document/Corpus
     abstractions and ChromaDB's expected data formats, making vector operations
     more intuitive and type-safe.
-
+    
     The VectorStore supports:
     - Adding individual documents, document lists, or corpus collections
     - Semantic similarity search with filtering capabilities
@@ -28,41 +28,42 @@ class VectorStore:
     def __init__(self, chroma_collection: ChromaCollection):
         self._collection = chroma_collection
 
-    def add(self, item: Union[GameInfo]):
+    def add(self, item: Union[Document, Corpus, List[Document]]):
         """
         Add documents to the vector store with automatic embedding generation.
-
+        
         This method accepts various input formats and normalizes them to the
         ChromaDB batch format. Documents are automatically embedded using the
         collection's configured embedding function (typically OpenAI).
-
+        
         Args:
             item (Union[Document, Corpus, List[Document]]): Documents to add.
                 Can be a single Document, a Corpus collection, or a list of Documents.
-
+                
         Raises:
             TypeError: If the input type is not supported or if a list contains
                 non-Document objects.
-
+                
         Example:
-            >>> store.add(GameInfo(id="doc-123", title="Game Title", ...))
+            >>> store.add(Document(content="AI is transforming healthcare"))
             >>> store.add([doc1, doc2, doc3])  # Batch add
+            >>> store.add(Corpus([doc1, doc2]))  # Add corpus
         """
-        if isinstance(item, GameInfo):
-            item = [item]
+        if isinstance(item, Document):
+            item = Corpus([item])
         elif isinstance(item, list):
-            if not all(isinstance(doc, GameInfo) for doc in item):
-                raise TypeError("List must contain GameDocument objects only.")
-        elif not isinstance(item, GameInfo):
-            raise TypeError("item must be GameDocument or List[GameDocument].")
+            if not all(isinstance(doc, Document) for doc in item):
+                raise TypeError("List must contain Document objects only.")
+            item = Corpus(item)
+        elif not isinstance(item, Corpus):
+            raise TypeError("item must be Document, Corpus, or List[Document].")
 
-        # Convert GameInfo to GameDocument format
-        item_dict = [GameDocument.from_gameinfo(game_info) for game_info in item]
+        item_dict = item.to_dict()
 
         self._collection.add(
-            documents=[item.content for item in item_dict],
-            ids=[item.id for item in item_dict],
-            metadatas=[item.metadata for item in item_dict]
+            documents=item_dict["contents"],
+            ids=item_dict["ids"],
+            metadatas=item_dict["metadatas"]
         )
 
     def query(self, query_texts: str | List[str], n_results: int = 3,
@@ -70,11 +71,11 @@ class VectorStore:
               where_document: Optional[Dict[str, Any]] = None) -> QueryResult:
         """
         Perform semantic similarity search against stored documents.
-
+        
         This method finds documents that are semantically similar to the query
         text using vector embeddings. Results are ranked by cosine similarity
         and can be filtered using metadata or document content conditions.
-
+        
         Args:
             query_texts (List[str]): List of query strings to search for
             n_results (int): Maximum number of results to return per query (default: 3)
@@ -82,11 +83,11 @@ class VectorStore:
                 ChromaDB query syntax (e.g., {"author": "Smith"})
             where_document (Optional[Dict[str, Any]]): Document content filter
                 conditions using ChromaDB query syntax
-
+                
         Returns:
             QueryResult: ChromaDB query result containing documents, distances,
                 metadata, and IDs for the most similar documents
-
+                
         Example:
             >>> results = store.query(
             ...     query_texts=["machine learning algorithms"],
@@ -104,29 +105,29 @@ class VectorStore:
             include=['documents', 'distances', 'metadatas']
         )
 
-    def get(self, ids: Optional[List[str]] = None,
+    def get(self, ids: Optional[List[str]] = None, 
             where: Optional[Dict[str, Any]] = None,
             limit: Optional[int] = None) -> GetResult:
         """
         Retrieve documents by ID or metadata filters without similarity search.
-
+        
         This method performs direct document retrieval based on exact ID matches
         or metadata filter conditions, without computing embedding similarities.
         Useful for fetching specific documents or browsing collections.
-
+        
         Args:
             ids (Optional[List[str]]): Specific document IDs to retrieve
             where (Optional[Dict[str, Any]]): Metadata filter conditions
             limit (Optional[int]): Maximum number of documents to return
-
+            
         Returns:
             GetResult: ChromaDB result containing the requested documents
                 with their metadata and IDs
-
+                
         Example:
             >>> # Get specific documents by ID
             >>> docs = store.get(ids=["doc-123", "doc-456"])
-            >>>
+            >>> 
             >>> # Get all documents from a specific source
             >>> docs = store.get(where={"source": "research_papers"}, limit=10)
         """
@@ -137,16 +138,15 @@ class VectorStore:
             include=['documents', 'distances', 'metadatas']
         )
 
-
 class VectorStoreManager:
     """
     Factory and lifecycle manager for ChromaDB vector stores.
-
+    
     This class handles the creation, configuration, and management of ChromaDB
     collections with OpenAI embeddings. It provides a centralized way to manage
     multiple vector stores within an application, handling the underlying ChromaDB
     client and embedding function configuration.
-
+    
     Key responsibilities:
     - ChromaDB client initialization and management
     - OpenAI embedding function configuration
@@ -160,7 +160,6 @@ class VectorStoreManager:
 
     def _create_embedding_function(self, api_key: str) -> EmbeddingFunction:
         embeddings_fn = embedding_functions.OpenAIEmbeddingFunction(
-            api_base="https://openai.vocareum.com/v1",
             api_key=api_key
         )
         return embeddings_fn
@@ -203,59 +202,51 @@ class VectorStoreManager:
             pass  # Store doesn't exist yet
 
 
-class GamesLoaderService:
+class CorpusLoaderService:
     """
-    Service for loading game data into vector stores.
-
-    This class provides methods to load game-related documents into vector stores,
-    allowing for efficient storage and retrieval of game data. It abstracts the
-    complexity of document loading, parsing, and vector store management.
-
-    The service currently supports:
-    - Loading game documents from various formats (e.g., PDF)
-    - Inserting documents into vector stores with automatic embedding generation
+    Service for loading documents from various sources into vector stores.
+    
+    This class provides convenient methods for loading and processing documents
+    from different file formats (currently PDF) into vector stores. It handles
+    the entire pipeline from file loading to vector store insertion.
+    
+    The service abstracts away the complexity of:
+    - Document loading and parsing
+    - Vector store creation and management
+    - Batch document insertion
+    - Progress reporting and error handling
     """
 
     def __init__(self, vector_store_manager: VectorStoreManager):
         self.manager = vector_store_manager
 
-    def load_json(self, store_name: str, json_path: str) -> VectorStore:
+    def load_pdf(self, store_name: str, pdf_path: str) -> VectorStore:
         """
-        Load game data from a JSON file into a vector store.
-
-        This method reads game-related documents from a JSON file and adds them
-        to the specified vector store. Each document in the JSON becomes a separate
-        entry in the vector store.
-
+        Load a PDF file into a vector store.
+        
+        This method handles the complete pipeline of loading a PDF document,
+        parsing its content into pages/chunks, and storing them in a vector
+        store with embeddings. Each page becomes a separate document in the store.
+        
         Args:
             store_name (str): Name of the vector store to create or use
-            json_path (str): Path to the JSON file containing game data
-
+            pdf_path (str): Path to the PDF file to load
+            
         Returns:
-            VectorStore: The vector store containing the loaded game data
-
+            VectorStore: The vector store containing the loaded PDF content
+            
         Example:
-            >>> loader = GamesLoaderService(manager)
-            >>> store = loader.load_json("game_data", "games.json")
-            >>> # Game data is now searchable in the vector store
-            >>> results = store.query(["strategy games"])
+            >>> loader = CorpusLoaderService(manager)
+            >>> store = loader.load_pdf("research_papers", "paper.pdf")
+            >>> # PDF is now searchable in the vector store
+            >>> results = store.query(["machine learning methodology"])
         """
         store = self.manager.get_or_create_store(store_name)
         print(f"VectorStore `{store_name}` ready!")
 
-        with open(json_path, 'r') as f:
-            game_data = json.load(f)
-
-        game_infos = [GameInfo(id=str(i),
-                                  title=doc['title'],
-                                  developer=doc['developer'],
-                                  release_date=doc['release_date'],
-                                  platforms=doc['platforms'],
-                                  genre=doc['genre'],
-                                  description=doc['description'])
-                     for i, doc in enumerate(game_data)]
-
-        store.add(game_infos)
-        print(f"GameInfos from `{json_path}` added!")
+        loader = PDFLoader(pdf_path)
+        document = loader.load()
+        store.add(document)
+        print(f"Pages from `{pdf_path}` added!")
 
         return store
