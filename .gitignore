@@ -1,4 +1,5 @@
 .backup
 .ipynb_checkpoints
 .idea
+chromadb
 .env
